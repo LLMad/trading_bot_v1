@@ -1,93 +1,120 @@
-import numpy as np  
-import sqlite3  
-import logging  
-from datetime import datetime  
-from scipy.stats import norm
+import threading  
+import time  
+from typing import Dict, Any
 
-\# Constants  
-DB\_NAME \= "crypto\_prices.db"  
-RISK\_FREE\_RATE \= 0.01  \# Example risk-free rate for VaR calculations
+class RealTimeRiskController:  
+    """Monitors positions and enforces real-time risk controls."""
 
-\# Configure logging  
-logging.basicConfig(level=logging.INFO, format='%(asctime)s \- %(levelname)s \- %(message)s', filename='trading\_bot.log')
+    def \_\_init\_\_(self, max\_exposure: float, max\_drawdown: float):  
+        self.positions \= {}  
+        self.lock \= threading.Lock()  
+        self.max\_exposure \= max\_exposure  
+        self.max\_drawdown \= max\_drawdown  
+        self.account\_equity \= 0.0  
+        self.initial\_equity \= 0.0
 
-class RiskManagement:  
-    def \_\_init\_\_(self, account\_balance, risk\_tolerance):  
-        self.account\_balance \= account\_balance  
-        self.risk\_tolerance \= risk\_tolerance  \# Risk tolerance as a percentage
+    def update\_position(self, symbol: str, quantity: float, price: float):  
+        """Updates the position for a given symbol.
 
-    def calculate\_position\_size(self, entry\_price, stop\_loss):  
-        """Calculate position size based on risk tolerance and stop loss."""  
-        risk\_per\_trade \= self.account\_balance \* (self.risk\_tolerance / 100\)  
-        position\_size \= risk\_per\_trade / abs(entry\_price \- stop\_loss)  
-        logging.info(f"Calculated position size: {position\_size}")  
-        return position\_size
+        Args:  
+            symbol (str): The trading symbol.  
+            quantity (float): The quantity of the position.  
+            price (float): The current price of the symbol.  
+        """  
+        with self.lock:  
+            if symbol not in self.positions:  
+                self.positions\[symbol\] \= {"quantity": 0.0, "value": 0.0}
 
-    def calculate\_var(self, historical\_returns, confidence\_level=0.95):  
-        """Calculate Value at Risk (VaR) using historical returns."""  
-        mean\_return \= np.mean(historical\_returns)  
-        std\_dev \= np.std(historical\_returns)  
-        var \= norm.ppf(1 \- confidence\_level, mean\_return, std\_dev) \* self.account\_balance  
-        logging.info(f"Calculated VaR: {var}")  
-        return var
+            position \= self.positions\[symbol\]  
+            position\["quantity"\] \+= quantity  
+            position\["value"\] \= position\["quantity"\] \* price  
+            self.\_evaluate\_risk()
 
-    def portfolio\_allocation(self, assets, cov\_matrix, risk\_aversion=3):  
-        """Perform mean-variance portfolio optimization."""  
-        expected\_returns \= np.array(\[asset\['expected\_return'\] for asset in assets\])  
-        weights \= np.linalg.inv(cov\_matrix).dot(expected\_returns) / risk\_aversion  
-        weights /= np.sum(weights)  \# Normalize weights to sum to 1  
-        logging.info(f"Calculated portfolio weights: {weights}")  
-        return weights
+    def calculate\_exposure(self) \-\> float:  
+        """Calculates total exposure based on current positions.
 
-    def enforce\_position\_limits(self, open\_positions):  
-        """Ensure no position exceeds predefined limits based on account equity."""  
-        max\_position\_size \= self.account\_balance \* 0.2  \# Example: 20% of account equity  
-        for position in open\_positions:  
-            if position\['size'\] \> max\_position\_size:  
-                logging.warning(f"Position size {position\['size'\]} exceeds limit {max\_position\_size}")  
-                return False  
-        return True
+        Returns:  
+            float: Total exposure value.  
+        """  
+        with self.lock:  
+            return sum(pos\["value"\] for pos in self.positions.values())
 
-\# Integration with database  
-def fetch\_historical\_returns():  
-    """Fetch historical returns from the database."""  
-    conn \= sqlite3.connect(DB\_NAME)  
-    cursor \= conn.cursor()  
-    cursor.execute("SELECT price FROM price\_data ORDER BY timestamp DESC LIMIT 100")  
-    prices \= \[row\[0\] for row in cursor.fetchall()\]  
-    conn.close()  
-    returns \= np.diff(np.log(prices))  
-    return returns
+    def calculate\_drawdown(self) \-\> float:  
+        """Calculates the current drawdown as a percentage.
 
-\# Unit tests for risk management module  
-def test\_risk\_management():  
-    account\_balance \= 10000  \# Example account balance  
-    risk\_tolerance \= 2  \# 2% risk per trade  
-    rm \= RiskManagement(account\_balance, risk\_tolerance)
+        Returns:  
+            float: Current drawdown percentage.  
+        """  
+        with self.lock:  
+            return max(0.0, (self.initial\_equity \- self.account\_equity) / self.initial\_equity \* 100\)
 
-    \# Test position size calculation  
-    entry\_price \= 20000  
-    stop\_loss \= 19000  
-    position\_size \= rm.calculate\_position\_size(entry\_price, stop\_loss)  
-    assert position\_size \> 0, "Position size calculation failed"
+    def \_evaluate\_risk(self):  
+        """Evaluates current risk and enforces controls if necessary."""  
+        exposure \= self.calculate\_exposure()  
+        drawdown \= self.calculate\_drawdown()
 
-    \# Test VaR calculation  
-    historical\_returns \= fetch\_historical\_returns()  
-    var \= rm.calculate\_var(historical\_returns)  
-    assert var \< 0, "VaR calculation failed"
+        if exposure \> self.max\_exposure:  
+            print("Exposure limit breached\! Initiating emergency unwinding.")  
+            self.\_unwind\_positions()
 
-    \# Test portfolio allocation  
-    assets \= \[{'expected\_return': 0.1}, {'expected\_return': 0.2}\]  
-    cov\_matrix \= np.array(\[\[0.01, 0.002\], \[0.002, 0.02\]\])  
-    weights \= rm.portfolio\_allocation(assets, cov\_matrix)  
-    assert np.isclose(np.sum(weights), 1), "Portfolio allocation failed"
+        if drawdown \> self.max\_drawdown:  
+            print("Drawdown limit breached\! Initiating emergency unwinding.")  
+            self.\_unwind\_positions()
 
-    \# Test position limits enforcement  
-    open\_positions \= \[{'size': 1500}, {'size': 2500}\]  
-    result \= rm.enforce\_position\_limits(open\_positions)  
-    assert result, "Position limits enforcement failed"
+    def \_unwind\_positions(self):  
+        """Unwinds all positions to reduce exposure."""  
+        with self.lock:  
+            for symbol in self.positions.keys():  
+                self.positions\[symbol\]\["quantity"\] \= 0.0  
+                self.positions\[symbol\]\["value"\] \= 0.0  
+            print("All positions unwound.")
+
+    def adjust\_trade(self, symbol: str, price: float, risk\_factor: float):  
+        """Adjusts trade size based on risk factor.
+
+        Args:  
+            symbol (str): The trading symbol.  
+            price (float): The current price of the symbol.  
+            risk\_factor (float): The risk adjustment factor.  
+        """  
+        with self.lock:  
+            position \= self.positions.get(symbol, {"quantity": 0.0})  
+            adjustment \= \-position\["quantity"\] \* risk\_factor  
+            print(f"Adjusting trade for {symbol} by {adjustment} units.")  
+            \# Logic to send adjustment order to the market goes here
+
+\# Unit tests  
+def test\_exposure\_limit():  
+    """Test exposure limit enforcement."""  
+    controller \= RealTimeRiskController(max\_exposure=10000.0, max\_drawdown=10.0)  
+    controller.initial\_equity \= 15000.0  
+    controller.account\_equity \= 15000.0
+
+    controller.update\_position("BTCUSD", 1.0, 11000.0)  
+    assert controller.calculate\_exposure() \<= 10000.0, "Exposure limit not enforced."
+
+def test\_drawdown\_limit():  
+    """Test drawdown limit enforcement."""  
+    controller \= RealTimeRiskController(max\_exposure=10000.0, max\_drawdown=10.0)  
+    controller.initial\_equity \= 15000.0  
+    controller.account\_equity \= 13000.0
+
+    controller.update\_position("BTCUSD", 1.0, 9000.0)  
+    assert controller.calculate\_drawdown() \<= 10.0, "Drawdown limit not enforced."
+
+def test\_position\_unwinding():  
+    """Test emergency position unwinding."""  
+    controller \= RealTimeRiskController(max\_exposure=10000.0, max\_drawdown=10.0)  
+    controller.initial\_equity \= 15000.0  
+    controller.account\_equity \= 13000.0
+
+    controller.update\_position("BTCUSD", 1.0, 11000.0)  
+    controller.\_unwind\_positions()  
+    assert sum(pos\["quantity"\] for pos in controller.positions.values()) \== 0.0, "Positions not unwound."
 
 if \_\_name\_\_ \== "\_\_main\_\_":  
-    \# Run unit tests  
-    test\_risk\_management()
+    test\_exposure\_limit()  
+    test\_drawdown\_limit()  
+    test\_position\_unwinding()  
+    print("All tests passed.")
 
