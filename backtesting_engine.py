@@ -1,115 +1,101 @@
 import pandas as pd  
 import numpy as np  
-from typing import Callable, Dict
+from typing import Callable, Dict, Any
 
 class HistoricalDataSimulator:  
-    """  
-    Simulates trading strategies using historical market data.
+    """Implements historical data simulation for trading strategies."""
 
-    Includes performance analysis, transaction cost modeling,  
-    and risk metrics calculation.  
-    """
+    def \_\_init\_\_(self, data\_path: str):  
+        self.data\_path \= data\_path  
+        self.data \= None
 
-    def \_\_init\_\_(self, historical\_data: pd.DataFrame, transaction\_cost: float):  
-        """  
-        Initializes the simulator with historical data and transaction cost.
+    def load\_data(self) \-\> pd.DataFrame:  
+        """Loads historical data from the provided file path."""  
+        self.data \= pd.read\_csv(self.data\_path, parse\_dates=\['timestamp'\])  
+        self.data.sort\_values('timestamp', inplace=True)  
+        return self.data
 
-        Args:  
-            historical\_data (pd.DataFrame): Historical market data with 'timestamp', 'price', and 'volume'.  
-            transaction\_cost (float): Proportional transaction cost (e.g., 0.001 for 0.1%).  
-        """  
-        self.historical\_data \= historical\_data  
-        self.transaction\_cost \= transaction\_cost  
-        self.results \= {}
-
-    def simulate\_strategy(self, strategy\_function: Callable) \-\> Dict\[str, float\]:  
-        """  
-        Simulates a trading strategy and calculates performance metrics.
+    def optimize\_parameters(self, strategy\_func: Callable, param\_grid: Dict\[str, Any\]) \-\> Dict\[str, Any\]:  
+        """Optimizes strategy parameters using historical data.
 
         Args:  
-            strategy\_function (Callable): Function defining the trading strategy.
+            strategy\_func (Callable): A function implementing the trading strategy.  
+            param\_grid (Dict\[str, Any\]): A dictionary of parameter names and values to test.
 
         Returns:  
-            Dict\[str, float\]: Performance metrics including profit, Sharpe ratio, and max drawdown.  
+            Dict\[str, Any\]: The best parameters and associated performance.  
         """  
-        self.historical\_data\['signal'\] \= self.historical\_data.apply(strategy\_function, axis=1)  
-        self.historical\_data\['returns'\] \= self.historical\_data\['price'\].pct\_change()  
-        self.historical\_data\['strategy\_returns'\] \= self.historical\_data\['signal'\].shift(1) \* self.historical\_data\['returns'\]
+        best\_params \= None  
+        best\_performance \= \-np.inf
 
-        \# Apply transaction costs  
-        self.historical\_data\['strategy\_returns'\] \-= self.transaction\_cost \* self.historical\_data\['signal'\].diff().abs()
+        for params in self.\_generate\_param\_combinations(param\_grid):  
+            performance \= self.\_evaluate\_strategy(strategy\_func, params)  
+            if performance \> best\_performance:  
+                best\_performance \= performance  
+                best\_params \= params
 
-        cumulative\_returns \= (1 \+ self.historical\_data\['strategy\_returns'\]).cumprod()  
-        self.results\['profit'\] \= cumulative\_returns.iloc\[-1\] \- 1  
-        self.results\['sharpe\_ratio'\] \= self.\_calculate\_sharpe\_ratio(self.historical\_data\['strategy\_returns'\])  
-        self.results\['max\_drawdown'\] \= self.\_calculate\_max\_drawdown(cumulative\_returns)
+        return {"params": best\_params, "performance": best\_performance}
 
-        return self.results
-
-    def \_calculate\_sharpe\_ratio(self, returns: pd.Series, risk\_free\_rate: float \= 0.01) \-\> float:  
-        """  
-        Calculates the Sharpe ratio for the given returns.
+    def analyze\_performance(self, returns: pd.Series) \-\> Dict\[str, Any\]:  
+        """Analyzes the performance of the strategy.
 
         Args:  
-            returns (pd.Series): Strategy returns.  
-            risk\_free\_rate (float): Risk-free rate (default 0.01).
+            returns (pd.Series): A series of strategy returns.
 
         Returns:  
-            float: Sharpe ratio.  
+            Dict\[str, Any\]: Performance metrics such as Sharpe ratio and max drawdown.  
         """  
-        excess\_returns \= returns \- risk\_free\_rate / 252  
-        return excess\_returns.mean() / returns.std() \* np.sqrt(252)
+        sharpe\_ratio \= returns.mean() / returns.std() \* np.sqrt(252)  
+        cumulative\_returns \= (1 \+ returns).cumprod()  
+        max\_drawdown \= (cumulative\_returns / cumulative\_returns.cummax() \- 1).min()
 
-    def \_calculate\_max\_drawdown(self, cumulative\_returns: pd.Series) \-\> float:  
-        """  
-        Calculates the maximum drawdown.
+        return {  
+            "Sharpe Ratio": sharpe\_ratio,  
+            "Max Drawdown": max\_drawdown,  
+            "Total Return": cumulative\_returns.iloc\[-1\] \- 1,  
+        }
 
-        Args:  
-            cumulative\_returns (pd.Series): Cumulative returns of the strategy.
+    def \_generate\_param\_combinations(self, param\_grid: Dict\[str, Any\]):  
+        """Generates all combinations of parameters from a grid."""  
+        import itertools  
+        keys, values \= zip(\*param\_grid.items())  
+        for combination in itertools.product(\*values):  
+            yield dict(zip(keys, combination))
 
-        Returns:  
-            float: Maximum drawdown.  
-        """  
-        rolling\_max \= cumulative\_returns.cummax()  
-        drawdowns \= (cumulative\_returns \- rolling\_max) / rolling\_max  
-        return drawdowns.min()
+    def \_evaluate\_strategy(self, strategy\_func: Callable, params: Dict\[str, Any\]) \-\> float:  
+        """Evaluates the strategy on historical data with the given parameters."""  
+        signals \= strategy\_func(self.data, \*\*params)  
+        returns \= self.data\['close'\].pct\_change() \* signals.shift(1)  
+        return returns.sum()
 
-\# Unit tests  
-def test\_simulate\_strategy():  
-    """Test the simulate\_strategy function for accuracy."""  
-    historical\_data \= pd.DataFrame({  
-        'timestamp': pd.date\_range(start='2023-01-01', periods=100, freq='D'),  
-        'price': np.linspace(100, 200, 100),  
-        'volume': np.random.randint(1000, 2000, 100),  
-    })
+\# Example unit tests  
+def test\_load\_data():  
+    simulator \= HistoricalDataSimulator('test\_data.csv')  
+    data \= simulator.load\_data()  
+    assert not data.empty, "Data loading failed."  
+    assert 'timestamp' in data.columns, "Timestamp column missing."
 
-    def dummy\_strategy(row):  
-        return 1 if row\['price'\] \> 150 else \-1
+def test\_optimize\_parameters():  
+    def dummy\_strategy(data, param1, param2):  
+        return pd.Series(1, index=data.index)
 
-    simulator \= HistoricalDataSimulator(historical\_data, transaction\_cost=0.001)  
-    results \= simulator.simulate\_strategy(dummy\_strategy)
+    simulator \= HistoricalDataSimulator('test\_data.csv')  
+    simulator.load\_data()  
+    param\_grid \= {'param1': \[1, 2\], 'param2': \[0.1, 0.2\]}  
+    result \= simulator.optimize\_parameters(dummy\_strategy, param\_grid)  
+    assert "params" in result, "Optimization failed to return parameters."  
+    assert result\["performance"\] \>= 0, "Performance calculation failed."
 
-    assert 'profit' in results, "Profit metric not calculated."  
-    assert 'sharpe\_ratio' in results, "Sharpe ratio not calculated."  
-    assert 'max\_drawdown' in results, "Max drawdown not calculated."
-
-def test\_transaction\_costs():  
-    """Test the application of transaction costs."""  
-    historical\_data \= pd.DataFrame({  
-        'timestamp': pd.date\_range(start='2023-01-01', periods=10, freq='D'),  
-        'price': \[100, 105, 110, 100, 95, 90, 85, 80, 75, 70\],  
-        'volume': np.random.randint(1000, 2000, 10),  
-    })
-
-    def dummy\_strategy(row):  
-        return 1
-
-    simulator \= HistoricalDataSimulator(historical\_data, transaction\_cost=0.01)  
-    results \= simulator.simulate\_strategy(dummy\_strategy)  
-    assert results\['profit'\] \< 0, "Transaction costs not correctly applied."
+def test\_analyze\_performance():  
+    returns \= pd.Series(\[0.01, \-0.02, 0.03, \-0.01\])  
+    simulator \= HistoricalDataSimulator('test\_data.csv')  
+    performance \= simulator.analyze\_performance(returns)  
+    assert "Sharpe Ratio" in performance, "Performance metrics missing."  
+    assert "Max Drawdown" in performance, "Performance metrics missing."
 
 if \_\_name\_\_ \== "\_\_main\_\_":  
-    test\_simulate\_strategy()  
-    test\_transaction\_costs()  
+    test\_load\_data()  
+    test\_optimize\_parameters()  
+    test\_analyze\_performance()  
     print("All tests passed.")
 
