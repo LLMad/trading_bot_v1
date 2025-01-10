@@ -1,146 +1,106 @@
 import logging  
-import psutil  
 import time  
-from datetime import datetime  
-from flask import Flask, jsonify  
-from trading\_bot import StrategyFactory, RiskManagement
+from typing import Dict, Any
 
-\# Configure logging  
-logging.basicConfig(level=logging.INFO, format='%(asctime)s \- %(levelname)s \- %(message)s', filename='performance\_monitor.log')
+class LoggingAndPerformanceTracking:  
+    """  
+    Implements comprehensive logging and performance tracking for the trading system.  
+    Includes functions for trade execution monitoring, system health checks, and performance metrics collection.  
+    """
 
-class PerformanceTracker:  
-    """Tracks real-time performance metrics and system health."""
+    def \_\_init\_\_(self, log\_file: str \= "trading\_system.log"):  
+        self.logger \= logging.getLogger("TradingSystemLogger")  
+        self.logger.setLevel(logging.INFO)  
+        file\_handler \= logging.FileHandler(log\_file)  
+        formatter \= logging.Formatter('%(asctime)s \- %(levelname)s \- %(message)s')  
+        file\_handler.setFormatter(formatter)  
+        self.logger.addHandler(file\_handler)  
+        self.metrics \= {  
+            "trade\_count": 0,  
+            "average\_execution\_time": 0.0,  
+            "system\_health\_checks": \[\]  
+        }
 
-    def \_\_init\_\_(self):  
-        self.performance\_metrics \= {  
-            "trades\_executed": 0,  
-            "winning\_trades": 0,  
-            "losing\_trades": 0,  
-            "win\_rate": 0.0,  
-            "average\_return": 0.0  
-        }  
-        self.resource\_usage \= {  
-            "cpu\_usage": 0.0,  
-            "memory\_usage": 0.0,  
-            "disk\_usage": 0.0  
-        }  
-        self.alerts \= \[\]
+    def log\_trade\_execution(self, trade\_id: str, details: Dict\[str, Any\]) \-\> None:  
+        """  
+        Logs trade execution details.
 
-    def update\_trade\_metrics(self, trade\_result):  
-        """Update trade performance metrics."""  
-        self.performance\_metrics\["trades\_executed"\] \+= 1  
-        if trade\_result \> 0:  
-            self.performance\_metrics\["winning\_trades"\] \+= 1  
+        Args:  
+            trade\_id (str): Unique identifier for the trade.  
+            details (Dict\[str, Any\]): Trade execution details such as symbol, price, quantity, etc.  
+        """  
+        self.logger.info(f"Trade Executed: {trade\_id}, Details: {details}")  
+        self.metrics\["trade\_count"\] \+= 1
+
+    def log\_system\_health(self, status: str, message: str) \-\> None:  
+        """  
+        Logs system health status and adds it to the health checks metrics.
+
+        Args:  
+            status (str): Status of the system (e.g., OK, WARNING, ERROR).  
+            message (str): Detailed message about the health status.  
+        """  
+        self.logger.info(f"System Health: {status} \- {message}")  
+        self.metrics\["system\_health\_checks"\].append({"status": status, "message": message})
+
+    def track\_execution\_time(self, func):  
+        """  
+        Decorator for tracking and logging execution time of a function.
+
+        Args:  
+            func (callable): The function to be tracked.
+
+        Returns:  
+            callable: Wrapped function with execution time tracking.  
+        """  
+        def wrapper(\*args, \*\*kwargs):  
+            start\_time \= time.time()  
+            result \= func(\*args, \*\*kwargs)  
+            execution\_time \= time.time() \- start\_time  
+            self.logger.info(f"Execution Time for {func.\_\_name\_\_}: {execution\_time:.4f} seconds")  
+            self.\_update\_average\_execution\_time(execution\_time)  
+            return result
+
+        return wrapper
+
+    def \_update\_average\_execution\_time(self, execution\_time: float) \-\> None:  
+        """  
+        Updates the average execution time metric.
+
+        Args:  
+            execution\_time (float): Time taken for the last execution.  
+        """  
+        count \= self.metrics\["trade\_count"\]  
+        if count \> 1:  
+            previous\_avg \= self.metrics\["average\_execution\_time"\]  
+            new\_avg \= (previous\_avg \* (count \- 1\) \+ execution\_time) / count  
+            self.metrics\["average\_execution\_time"\] \= new\_avg  
         else:  
-            self.performance\_metrics\["losing\_trades"\] \+= 1
+            self.metrics\["average\_execution\_time"\] \= execution\_time
 
-        total\_trades \= self.performance\_metrics\["trades\_executed"\]  
-        self.performance\_metrics\["win\_rate"\] \= (  
-            self.performance\_metrics\["winning\_trades"\] / total\_trades  
-        ) \* 100  
-        logging.info(f"Updated performance metrics: {self.performance\_metrics}")
+\# Unit Tests  
+import unittest
 
-    def calculate\_system\_health(self):  
-        """Track system resource usage."""  
-        self.resource\_usage\["cpu\_usage"\] \= psutil.cpu\_percent()  
-        self.resource\_usage\["memory\_usage"\] \= psutil.virtual\_memory().percent  
-        self.resource\_usage\["disk\_usage"\] \= psutil.disk\_usage('/').percent  
-        logging.info(f"System health: {self.resource\_usage}")
+class TestLoggingAndPerformanceTracking(unittest.TestCase):  
+    def setUp(self):  
+        self.logger \= LoggingAndPerformanceTracking(log\_file="test\_trading\_system.log")
 
-    def check\_alerts(self):  
-        """Trigger alerts based on predefined conditions."""  
-        if self.resource\_usage\["cpu\_usage"\] \> 85:  
-            self.alerts.append(f"High CPU usage: {self.resource\_usage\['cpu\_usage'\]}%")  
-        if self.resource\_usage\["memory\_usage"\] \> 85:  
-            self.alerts.append(f"High memory usage: {self.resource\_usage\['memory\_usage'\]}%")
+    def test\_log\_trade\_execution(self):  
+        self.logger.log\_trade\_execution("T123", {"symbol": "BTC/USD", "price": 50000, "quantity": 1})  
+        self.assertEqual(self.logger.metrics\["trade\_count"\], 1\)
 
-        if self.alerts:  
-            logging.warning(f"Alerts triggered: {self.alerts}")
+    def test\_log\_system\_health(self):  
+        self.logger.log\_system\_health("OK", "System running smoothly")  
+        self.assertEqual(len(self.logger.metrics\["system\_health\_checks"\]), 1\)
 
-\# Flask app for real-time monitoring  
-dashboard\_app \= Flask(\_\_name\_\_)  
-performance\_tracker \= PerformanceTracker()
+    def test\_track\_execution\_time(self):  
+        @self.logger.track\_execution\_time  
+        def sample\_function():  
+            time.sleep(0.1)
 
-@dashboard\_app.route('/performance', methods=\['GET'\])  
-def get\_performance():  
-    return jsonify(performance\_tracker.performance\_metrics)
-
-@dashboard\_app.route('/system\_health', methods=\['GET'\])  
-def get\_system\_health():  
-    performance\_tracker.calculate\_system\_health()  
-    return jsonify(performance\_tracker.resource\_usage)
-
-@dashboard\_app.route('/alerts', methods=\['GET'\])  
-def get\_alerts():  
-    performance\_tracker.check\_alerts()  
-    return jsonify(performance\_tracker.alerts)
-
-\# Unit tests  
-def test\_performance\_tracker():  
-    pt \= PerformanceTracker()  
-    pt.update\_trade\_metrics(1)  
-    pt.update\_trade\_metrics(-1)  
-    assert pt.performance\_metrics\["trades\_executed"\] \== 2  
-    assert pt.performance\_metrics\["winning\_trades"\] \== 1  
-    assert pt.performance\_metrics\["losing\_trades"\] \== 1
-
-    pt.calculate\_system\_health()  
-    assert pt.resource\_usage\["cpu\_usage"\] \>= 0  
-    assert pt.resource\_usage\["memory\_usage"\] \>= 0
-
-    pt.check\_alerts()  
-    assert isinstance(pt.alerts, list)
+        sample\_function()  
+        self.assertGreater(self.logger.metrics\["average\_execution\_time"\], 0\)
 
 if \_\_name\_\_ \== "\_\_main\_\_":  
-    \# Run unit tests  
-    test\_performance\_tracker()
-
-    \# Start Flask app  
-    dashboard\_app.run(debug=True, port=5000)
-
-def test\_update\_trade\_metrics():  
-    """Test trade performance metrics updates."""  
-    pt \= PerformanceTracker()  
-      
-    \# Simulate a winning trade  
-    pt.update\_trade\_metrics(1)  
-    assert pt.performance\_metrics\["trades\_executed"\] \== 1  
-    assert pt.performance\_metrics\["winning\_trades"\] \== 1  
-    assert pt.performance\_metrics\["losing\_trades"\] \== 0  
-    assert pt.performance\_metrics\["win\_rate"\] \== 100.0
-
-    \# Simulate a losing trade  
-    pt.update\_trade\_metrics(-1)  
-    assert pt.performance\_metrics\["trades\_executed"\] \== 2  
-    assert pt.performance\_metrics\["winning\_trades"\] \== 1  
-    assert pt.performance\_metrics\["losing\_trades"\] \== 1  
-    assert pt.performance\_metrics\["win\_rate"\] \== 50.0
-
-def test\_check\_alerts():  
-    """Test alert triggering based on system health conditions."""  
-    pt \= PerformanceTracker()  
-      
-    \# Mock system health conditions  
-    pt.resource\_usage\["cpu\_usage"\] \= 90  \# High CPU usage  
-    pt.resource\_usage\["memory\_usage"\] \= 88  \# High memory usage  
-      
-    pt.check\_alerts()  
-      
-    assert len(pt.alerts) \== 2  
-    assert "High CPU usage" in pt.alerts\[0\]  
-    assert "High memory usage" in pt.alerts\[1\]
-
-    \# Test no alerts when conditions are normal  
-    pt.alerts.clear()  
-    pt.resource\_usage\["cpu\_usage"\] \= 50  \# Normal CPU usage  
-    pt.resource\_usage\["memory\_usage"\] \= 40  \# Normal memory usage  
-      
-    pt.check\_alerts()  
-    assert len(pt.alerts) \== 0
-
-\# Run the tests  
-if \_\_name\_\_ \== "\_\_main\_\_":  
-    test\_update\_trade\_metrics()  
-    test\_check\_alerts()  
-    print("All tests passed.")
+    unittest.main()
 
